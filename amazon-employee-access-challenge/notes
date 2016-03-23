@@ -1,0 +1,10 @@
+LR with class_weight balanced
+X_raw = 49.85
+X_sparse = 90.38
+
+LR with class_weight not balanced
+X_raw = 94.21
+X_sparse = 94.71
+
+LR with class_weight balanced, onehot, first occ as OOV
+90.3811089028
