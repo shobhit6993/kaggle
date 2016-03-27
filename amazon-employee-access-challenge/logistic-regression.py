@@ -1,12 +1,12 @@
 import pandas as pd
 import numpy as np
-import itertools
 from scipy import sparse
 from sklearn.linear_model import LogisticRegression
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.metrics import roc_auc_score, make_scorer
 from sklearn.cross_validation import cross_val_score
 from random import shuffle
+from itertools import combinations
 
 
 class AmazonAccess(object):
@@ -28,11 +28,11 @@ class AmazonAccess(object):
         self.X_test_raw = None
         self.X_test_sparse = None
 
-        self.all_feats = ['RESOURCE', 'MGR_ID', 'ROLE_ROLLUP_1',
-                          'ROLE_ROLLUP_2', 'ROLE_DEPTNAME',
-                          'ROLE_TITLE', 'ROLE_FAMILY_DESC',
-                          'ROLE_FAMILY', 'ROLE_CODE'
-                          ]
+        self.all_colmns = ['RESOURCE', 'MGR_ID', 'ROLE_ROLLUP_1',
+                           'ROLE_ROLLUP_2', 'ROLE_DEPTNAME',
+                           'ROLE_TITLE', 'ROLE_FAMILY_DESC',
+                           'ROLE_FAMILY', 'ROLE_CODE'
+                           ]
 
     def __read_data(self, filename):
         return pd.read_csv(filename)
@@ -53,36 +53,78 @@ class AmazonAccess(object):
         for r in xrange(0, n):
             self.X_train_raw[r][c] = temp[r]
 
-    def __extract_xy_train(self, colmns):
+    def __extract_xy_train(self, colmns, group, degrees, feat_list=None):
         """Extracts feature matrix (X_train) and label vector (y) from csv
         parsed labelled training data. Only the specified columns are used.
+        Optionally adds feature groupings to the feature matrix.
 
         Args:
-            colmns (list): List of columns to be used in feature matrix.
+            colmns (list(int)): Column indices to be used in feature matrix.
+            group (bool): True if feature grouping is desired.
+            degrees (list(int), optional): List of degrees of feature
+                combinations to be added.
         """
-        self.keymap = None
-        self.X_train_raw = self.data[colmns].as_matrix()
+        X_train_raw = self.data.ix[:, colmns].values
         # self.__replace_by_noise(c=1)
-        n = self.X_train_raw.shape[0]
-        self.X_train_raw = np.hstack((self.X_train_raw,
-                                      np.ones(shape=(n, 1))))
-        self.X_train_sparse, self.keymap = self.__one_hot_encoder(
-            self.X_train_raw, True, False)
-        self.y = self.data['ACTION'].as_matrix().reshape(-1, 1).ravel()
+        if group and (len(degrees) > 0 and len(colmns) >= min(degrees)):
+            X_train_raw = self.__add_groupings(X_train_raw, degrees)
 
-    def __extract_xy_test(self, colmns):
+        y = self.data['ACTION'].as_matrix().reshape(-1, 1).ravel()
+        if feat_list is None:
+            return X_train_raw, y
+        else:
+            return X_train_raw[:, feat_list], y
+
+    def __extract_xy_test(self, colmns, group, degrees, feat_list=None):
         """Extracts feature matrix (X_test) and label vector (y) from csv
         parsed unlabelled test data. Only the specified columns are used.
+        Optionally adds feature groupings to the feature matrix.
 
         Args:
-            colmns (list): List of columns to be used in feature matrix.
+            colmns (list(int)): Column indices to be used in feature matrix.
+            group (bool): True if feature grouping is desired.
+            degrees (list(int), optional): List of degrees of feature
+                combinations to be added.
         """
-        self.X_test_raw = self.test_data[colmns].as_matrix()
-        n = self.X_test_raw.shape[0]
-        self.X_test_raw = np.hstack((self.X_test_raw,
-                                     np.ones(shape=(n, 1))))
-        self.X_test_sparse, _ = self.__one_hot_encoder(
-            self.X_test_raw, False, False, self.keymap)
+        X_test_raw = self.test_data.ix[:, colmns].values
+        if group and (len(degrees) > 0 and len(colmns) >= min(degrees)):
+            X_test_raw = self.__add_groupings(X_test_raw, degrees)
+        if feat_list is None:
+            return X_test_raw
+        else:
+            return X_test_raw[:, feat_list]
+
+        # X_test_raw = self.test_data[colmns].as_matrix()
+        # if group and len(colmns) >= min(degrees):
+        #     self.X_test_raw = self.__add_groupings(self.X_test_raw, degrees)
+        # n = self.X_test_raw.shape[0]
+        # self.X_test_raw = np.hstack((self.X_test_raw,
+        #                              np.ones(shape=(n, 1))))
+        # self.X_test_sparse, _ = self.__one_hot_encoder(
+        #     self.X_test_raw, False, False, self.keymap)
+
+    def __add_groupings(self, data, degrees):
+        """Constructs new features from groups of existing features, and adds
+        it to the supplied feature matrix.
+
+        Args:
+            data (np.array): Input feature matrix.
+            degrees (list(int)): List of degrees of feature combinations
+                to be added.
+        """
+        grouped_data = [data]
+        for d in degrees:
+            grouped_data.append(self.__group_data(data, d))
+        print ""
+        return np.hstack([g for g in grouped_data])
+
+    def __group_data(self, data, degree):
+        new_data = []
+        m, n = data.shape
+        for indices in combinations(range(n), degree):
+            print indices,
+            new_data.append([hash(tuple(v)) for v in data[:, indices]])
+        return np.array(new_data).T
 
     def __one_hot_encoder(self, raw_data, train, oov, keymap=None):
         """Given a matrix with categorical columns, returns a sparse matrix
@@ -102,7 +144,6 @@ class AmazonAccess(object):
             sparse csr: sparse one-hot encoded matrix
         """
         n = raw_data.shape[0]
-
         if keymap is None:
             keymap = []
             for col in raw_data.T:
@@ -140,7 +181,7 @@ class AmazonAccess(object):
         """
         scores = cross_val_score(self.model,
                                  X, y, scoring=make_scorer(roc_auc_score),
-                                 cv=10, n_jobs=1)
+                                 cv=5, n_jobs=1)
         print scores
         print "auc mean = ", scores.mean()
         print "auc sd = ", np.std(scores)
@@ -159,13 +200,13 @@ class AmazonAccess(object):
         self.model.fit(X_train, y)
         print "Training = %f" % self.model.score(X_train, y)
 
-        prediction_probs = self.model.predict_proba(X_test)
+        prediction_probs = self.model.predict_proba(X_test)[:, 1]
         self.__write_csv(prediction_probs,
-                         self.X_test_sparse.shape[0], self.test_out_file)
+                         X_test.shape[0], self.test_out_file)
 
-        prediction_probs = self.model.predict_proba(X_train)
+        prediction_probs = self.model.predict_proba(X_train)[:, 1]
         self.__write_csv(prediction_probs,
-                         self.X_train_sparse.shape[0], self.train_out_file)
+                         X_train.shape[0], self.train_out_file)
 
     def __write_csv(self, prediction_probs, n, filename):
         """Write ID, Action to csv file. The Action field contains probability
@@ -177,13 +218,13 @@ class AmazonAccess(object):
             filename (string): csv file to be writen.
         """
         d = {'Id': pd.Series([i for i in xrange(1, n + 1)]),
-             'Action': pd.Series(prediction_probs[:, 1])}
+             'Action': pd.Series(prediction_probs)}
         df = pd.DataFrame(d)
         df = df[['Id', 'Action']]
         df.to_csv(filename, sep=',', encoding='utf-8',
                   index=False)
 
-    def logistic_regression_cv(self, feat_list):
+    def __lr_cv(self):
         """Trains and tests a LogisticRegression model with GridSearch for
         the regularization parameter. Uses only the features provided in the
         feat_list
@@ -191,9 +232,6 @@ class AmazonAccess(object):
         Args:
             feat_list (list): List of features (df colm names) to be used.
         """
-        self.__extract_xy_train(feat_list)
-        self.__extract_xy_test(feat_list)
-
         self.model = LogisticRegressionCV(Cs=20,
                                           class_weight='balanced',
                                           cv=5,
@@ -204,23 +242,43 @@ class AmazonAccess(object):
         self.__train_and_predict(self.X_train_sparse,
                                  self.y, self.X_test_sparse)
 
-    def logistic_regression(self, feat_list):
-        """Trains and tests a LogisticRegression model. Uses only the feature
-        provided in the feat_list
+    def __lr(self, X_train, y):
+        self.model = LogisticRegression(class_weight='balanced')
+        return self.__cross_validation(X_train, y)
+
+    def logistic_regression(self, degrees):
+        """Trains and tests a LogisticRegression model.
 
         Args:
-            feat_list (list): List of features (df colm names) to be used.
+            degrees (list(int)): List of degrees of feature combinations
+                to be added.
         """
-        self.__extract_xy_train(feat_list)
-        self.__extract_xy_test(feat_list)
+        # prepare the train feature matrix
+        self.X_train_raw, self.y = self.__extract_xy_train(self.all_colmns,
+                                                           True, degrees)
+        # X_train_raw = np.hstack((X_train_raw,
+        #                          np.ones(shape=(n, 1))))
+        self.X_train_sparse, keymap = self.__one_hot_encoder(self.X_train_raw,
+                                                             True, False)
 
-        self.model = LogisticRegression(class_weight='balanced')
-        return self.__cross_validation(self.X_train_sparse, self.y)
-        # self.__train_and_predict(self.X_train_sparse,
-        # self.y, self.X_test_sparse)
+        # prepare the test feature matrix
+        self.X_test_raw = self.__extract_xy_test(self.all_colmns,
+                                                 True, degrees)
+        # X_test_raw = np.hstack((X_test_raw,
+        #                          np.ones(shape=(n, 1))))
+        self.X_test_sparse, _ = self.__one_hot_encoder(self.X_test_raw,
+                                                       True, False, keymap)
+        self.__lr_cv()
 
-    def feature_selection(self, max_features):
-        subset = set(itertools.combinations(self.all_feats, 1))
+    def feature_selection(self, max_features, degrees):
+        X_train_raw, self.y = self.__extract_xy_train(self.all_colmns,
+                                                      True, degrees)
+        n = X_train_raw.shape[1]
+        X_t = [self.__one_hot_encoder(X_train_raw[:, [c]], True, False)[0]
+               for c in xrange(0, n)]
+
+        feat_set = set(range(len(X_t)))
+        print feat_set
         feat_list = []
         curr_list = []
         k = 1
@@ -230,34 +288,48 @@ class AmazonAccess(object):
             print "Trying number of features = ", k
             prev_max_score = max_score
             max_score = -1
-            best_s = None
-            for s in subset:
+            best_f = None
+            for f in feat_set:
                 curr_list = list(feat_list)
-                curr_list.append(s[0])
+                curr_list.append(f)
                 print curr_list
-                score = self.logistic_regression(curr_list)
+                X = sparse.hstack([X_t[c] for c in curr_list]).tocsr()
+                score = self.__lr(X, self.y)
                 if score > max_score:
-                    best_s = s
+                    best_f = f
                     max_score = score
                 print ""
-            feat_list.append(best_s[0])
-            subset.remove(best_s)
+            feat_list.append(best_f)
+            feat_set.remove(best_f)
             print "Best for %d is %f" % (k, max_score), feat_list
             k = k + 1
 
         # remove last feature added
-        if k != max_features:
+        if k <= max_features and (prev_max_score >= max_score):
             del(feat_list[-1])
 
         print "\n\n*****Feature selection done.******"
         print "Best greedy feature subset: ", feat_list, "\n\n"
-        return feat_list
+
+        # prepare the train feature matrix
+        self.X_train_raw, self.y = self.__extract_xy_train(self.all_colmns,
+                                                           True, degrees,
+                                                           feat_list)
+        self.X_train_sparse, keymap = self.__one_hot_encoder(self.X_train_raw,
+                                                             True, False)
+
+        # prepare the test feature matrix
+        self.X_test_raw = self.__extract_xy_test(self.all_colmns,
+                                                 True, degrees, feat_list)
+        self.X_test_sparse, _ = self.__one_hot_encoder(self.X_test_raw,
+                                                       True, False, keymap)
+        self.__lr_cv()
 
 
 def main(train_file, test_file, train_out_file, test_out_file):
     lr = AmazonAccess(train_file, test_file, train_out_file, test_out_file)
-    feat_list = lr.feature_selection(10)
-    lr.logistic_regression_cv(feat_list)
+    lr.feature_selection(93, [3])
+    # lr.logistic_regression([2])
 
 if __name__ == '__main__':
     train_file = "./data/train.csv"
