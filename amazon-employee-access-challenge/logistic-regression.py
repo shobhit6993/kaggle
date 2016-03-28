@@ -28,11 +28,10 @@ class AmazonAccess(object):
         self.X_test_raw = None
         self.X_test_sparse = None
 
-        self.all_colmns = ['RESOURCE', 'MGR_ID', 'ROLE_ROLLUP_1',
-                           'ROLE_ROLLUP_2', 'ROLE_DEPTNAME',
+        self.all_colmns = ['RESOURCE', 'MGR_ID', 'ROLE_DEPTNAME',
+                           'ROLE_ROLLUP_1', 'ROLE_ROLLUP_2',
                            'ROLE_TITLE', 'ROLE_FAMILY_DESC',
-                           'ROLE_FAMILY', 'ROLE_CODE'
-                           ]
+                           'ROLE_FAMILY']
 
     def __read_data(self, filename):
         return pd.read_csv(filename)
@@ -59,10 +58,16 @@ class AmazonAccess(object):
         Optionally adds feature groupings to the feature matrix.
 
         Args:
-            colmns (list(int)): Column indices to be used in feature matrix.
+            colmns (list(int)): Column indices to be used in original feature
+                matrix.
             group (bool): True if feature grouping is desired.
             degrees (list(int), optional): List of degrees of feature
                 combinations to be added.
+            feat_list (list(int), optional): Feature indices to be used. These
+                correspond to the enlanged feature matrix.
+
+        Returns:
+            numpy.array, list(int): Train feature matrix, label vector
         """
         X_train_raw = self.data.ix[:, colmns].values
         # self.__replace_by_noise(c=1)
@@ -81,10 +86,16 @@ class AmazonAccess(object):
         Optionally adds feature groupings to the feature matrix.
 
         Args:
-            colmns (list(int)): Column indices to be used in feature matrix.
+            colmns (list(int)): Column indices to be used in original feature
+                matrix.
             group (bool): True if feature grouping is desired.
             degrees (list(int), optional): List of degrees of feature
                 combinations to be added.
+            feat_list (list(int), optional): Feature indices to be used. These
+                correspond to the enlanged feature matrix.
+
+        Returns:
+            numpy.array: Test feature matrix
         """
         X_test_raw = self.test_data.ix[:, colmns].values
         if group and (len(degrees) > 0 and len(colmns) >= min(degrees)):
@@ -94,23 +105,17 @@ class AmazonAccess(object):
         else:
             return X_test_raw[:, feat_list]
 
-        # X_test_raw = self.test_data[colmns].as_matrix()
-        # if group and len(colmns) >= min(degrees):
-        #     self.X_test_raw = self.__add_groupings(self.X_test_raw, degrees)
-        # n = self.X_test_raw.shape[0]
-        # self.X_test_raw = np.hstack((self.X_test_raw,
-        #                              np.ones(shape=(n, 1))))
-        # self.X_test_sparse, _ = self.__one_hot_encoder(
-        #     self.X_test_raw, False, False, self.keymap)
-
     def __add_groupings(self, data, degrees):
-        """Constructs new features from groups of existing features, and adds
+        """Constructs new features by grouping existing features, and adds
         it to the supplied feature matrix.
 
         Args:
-            data (np.array): Input feature matrix.
+            data (numpy.array): Input feature matrix.
             degrees (list(int)): List of degrees of feature combinations
                 to be added.
+
+        Returns:
+            numpy.array: Feature matrix with new feature combinations
         """
         grouped_data = [data]
         for d in degrees:
@@ -128,20 +133,24 @@ class AmazonAccess(object):
 
     def __one_hot_encoder(self, raw_data, train, oov, keymap=None):
         """Given a matrix with categorical columns, returns a sparse matrix
-        with one-hot encoded columns. Also sets the keymap for categorical to
-        index mapping. The keymap is set only during training.
+        with one-hot encoded columns and the keymap for categorical to
+        index mapping. The keymap is set only during training. During testing,
+        a keymap is required.
 
         To handle OOV categories during testing, the first occurrence of each
         category in a column during training is treated as OOV (all features
         for that category in that particular training eg are set to 0).
+        Smoothing is done only when oov is set to True
 
         Args:
-            raw_data (matrix): Matrix of raw categorical data.
+            raw_data (numpy.array): Matrix of raw categorical data.
             train (bool): Set to True during training.
             oov (bool): Set to True to add smoothing.
+            keymap (TYPE, optional): For categorical to index mapping.
+                Requiered during testing.
 
         Returns:
-            sparse csr: sparse one-hot encoded matrix
+            sparse.csr_matrix: sparse one-hot encoded matrix
         """
         n = raw_data.shape[0]
         if keymap is None:
@@ -226,11 +235,7 @@ class AmazonAccess(object):
 
     def __lr_cv(self):
         """Trains and tests a LogisticRegression model with GridSearch for
-        the regularization parameter. Uses only the features provided in the
-        feat_list
-
-        Args:
-            feat_list (list): List of features (df colm names) to be used.
+        the regularization parameter.
         """
         self.model = LogisticRegressionCV(Cs=20,
                                           class_weight='balanced',
@@ -243,6 +248,16 @@ class AmazonAccess(object):
                                  self.y, self.X_test_sparse)
 
     def __lr(self, X_train, y):
+        """Trains logistic regression on the supplied feature matrix,
+        and label vector. Returns ROC AUC score from 5-fold CV.
+
+        Args:
+            X_train (numpy array/2d list): Feature matrix for training.
+            y (list(int)): Lael vector.
+
+        Returns:
+            TYPE: Mean ROC-AUC score from 5-fold cross-validation.
+        """
         self.model = LogisticRegression(class_weight='balanced')
         return self.__cross_validation(X_train, y)
 
@@ -256,21 +271,25 @@ class AmazonAccess(object):
         # prepare the train feature matrix
         self.X_train_raw, self.y = self.__extract_xy_train(self.all_colmns,
                                                            True, degrees)
-        # X_train_raw = np.hstack((X_train_raw,
-        #                          np.ones(shape=(n, 1))))
         self.X_train_sparse, keymap = self.__one_hot_encoder(self.X_train_raw,
                                                              True, False)
 
         # prepare the test feature matrix
         self.X_test_raw = self.__extract_xy_test(self.all_colmns,
                                                  True, degrees)
-        # X_test_raw = np.hstack((X_test_raw,
-        #                          np.ones(shape=(n, 1))))
         self.X_test_sparse, _ = self.__one_hot_encoder(self.X_test_raw,
                                                        True, False, keymap)
         self.__lr_cv()
 
     def feature_selection(self, max_features, degrees):
+        """Performs greedy forward feature selection. Trains and tests the
+        model on the best feature set obtained by greedy method.
+
+        Args:
+            max_features (int): Max caridnality of the feature set.
+            degrees (list(int)): List of degrees of feature combinations
+                to be added.
+        """
         X_train_raw, self.y = self.__extract_xy_train(self.all_colmns,
                                                       True, degrees)
         n = X_train_raw.shape[1]
@@ -328,7 +347,7 @@ class AmazonAccess(object):
 
 def main(train_file, test_file, train_out_file, test_out_file):
     lr = AmazonAccess(train_file, test_file, train_out_file, test_out_file)
-    lr.feature_selection(93, [3])
+    lr.feature_selection(92, [2, 3])
     # lr.logistic_regression([2])
 
 if __name__ == '__main__':
