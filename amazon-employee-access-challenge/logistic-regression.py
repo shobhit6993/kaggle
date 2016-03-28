@@ -120,14 +120,12 @@ class AmazonAccess(object):
         grouped_data = [data]
         for d in degrees:
             grouped_data.append(self.__group_data(data, d))
-        print ""
         return np.hstack([g for g in grouped_data])
 
     def __group_data(self, data, degree):
         new_data = []
         m, n = data.shape
         for indices in combinations(range(n), degree):
-            print indices,
             new_data.append([hash(tuple(v)) for v in data[:, indices]])
         return np.array(new_data).T
 
@@ -207,7 +205,7 @@ class AmazonAccess(object):
             X_test (2d): Test feature matrix.
         """
         self.model.fit(X_train, y)
-        print "Training = %f" % self.model.score(X_train, y)
+        print "Training auc = %f" % self.model.score(X_train, y)
 
         prediction_probs = self.model.predict_proba(X_test)[:, 1]
         self.__write_csv(prediction_probs,
@@ -297,7 +295,6 @@ class AmazonAccess(object):
                for c in xrange(0, n)]
 
         feat_set = set(range(len(X_t)))
-        print feat_set
         feat_list = []
         curr_list = []
         k = 1
